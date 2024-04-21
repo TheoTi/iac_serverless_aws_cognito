@@ -12,7 +12,26 @@ provider:
   region: us-east-1
   runtime: nodejs20.x
   deploymentMethod: direct
+  memorySize: 128
   architecture: arm64
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - cognito-idp:AdminGetUser
+          Resource: !GetAtt LiveUserPool.Arn
+  environment:
+    COGNITO_CLIENT_ID: !Ref LiveUserPoolClient
+    COGNITO_POOL_ID: !Ref LiveUserPool
+  httpApi:
+    authorizers:
+      CognitoAuthorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: !GetAtt LiveUserPool.ProviderURL
+        audience:
+          - !Ref LiveUserPoolClient
 
 custom:
   esbuild:
@@ -27,10 +46,105 @@ custom:
   platform: node
   concurrency: 10
 
+resources:
+  Resources:
+    LiveUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        DeletionProtection: INACTIVE
+        UserPoolName: LiveUserPool
+        MfaConfiguration: OFF
+        AutoVerifiedAttributes:
+          - email
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+        UsernameAttributes:
+          - email
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 10
+            RequireLowercase: false
+            RequireNumbers: false
+            RequireSymbols: false
+            RequireUppercase: false
+            TemporaryPasswordValidityDays: 2
+        Schema:
+          - Name: given_name
+            Mutable: true
+            Required: true
+            AttributeDataType: String
+          - Name: family_name
+            Mutable: true
+            Required: true
+            AttributeDataType: String
+    LiveUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: LiveUserPoolClient
+        UserPoolId: !Ref LiveUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        TokenValidityUnits:
+          AccessToken: hours
+          RefreshToken: hours
+        AccessTokenValidity: 3
+        RefreshTokenValidity: 1440 # 60 days
 functions:
-  hello:
-    handler: src/functions/hello.handler
+  # cognitoCustomMessage:
+  #   handler: src/functions/cognitoCustomMessage.handler
+  #   events:
+  #     - cognitoUserPool:
+  #         pool: LiveUserPool
+  #         trigger: CustomMessage
+  #         existing: true
+  #         forceDeploy: true
+  signUp:
+    handler: src/functions/signUp.handler
     events:
       - httpApi:
-          method: GET
-          path: /hello
+          method: post
+          path: /auth/sign-up
+  signIn:
+    handler: src/functions/signIn.handler
+    events:
+      - httpApi:
+          method: post
+          path: /auth/sign-in
+  refreshToken:
+    handler: src/functions/refreshToken.handler
+    events:
+      - httpApi:
+          method: post
+          path: /auth/refresh-token
+  forgotPassword:
+    handler: src/functions/forgotPassword.handler
+    events:
+      - httpApi:
+          method: post
+          path: /auth/forgot-password
+  resetPassword:
+    handler: src/functions/resetPassword.handler
+    events:
+      - httpApi:
+          method: post
+          path: /auth/reset-password
+  accountConfirmation:
+    handler: src/functions/accountConfirmation.handler
+    events:
+      - httpApi:
+          method: post
+          path: /auth/account-confirmation
+  profile:
+    handler: src/functions/profile.handler
+
+    events:
+      - httpApi:
+          method: get
+          path: /profile
+          authorizer:
+            name: CognitoAuthorizer
